@@ -1,0 +1,7 @@
+/vendor/
+
+# Mac
+.DS_STORE
+
+# IDEA
+/.idea/
