@@ -6,8 +6,6 @@ use Ninja\DataCollector\RedisDataCollector;
 use Ninja\Exception\NotInitializedException;
 use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpFoundation\Response;
-use Symfony\Component\HttpKernel\HttpKernelInterface;
-use Symfony\Component\HttpKernel\Kernel;
 
 /**
  * Class Ninja
@@ -95,20 +93,13 @@ class Ninja
     private static $runtime;
 
     /**
-     * Indicates if we should send debug headers.
-     *
-     * @var bool
-     */
-    private static $debug;
-
-    /**
      * Prepares a Ninja for combat.
      *
      * @param string                      $configFile    The location of the Ninja hazard config
      * @param Request|null                $request       The Request to protect
      * @param DataCollectorInterface|null $dataCollector The RedisClient to use
      */
-    public static function prepare($configFile, Request $request = null, DataCollectorInterface $dataCollector = null, $debug = false)
+    public static function prepare($configFile, Request $request = null, DataCollectorInterface $dataCollector = null)
     {
         if (!self::$isReady) {
             self::$start = self::$start ?: microtime(true);
@@ -117,8 +108,8 @@ class Ninja
 
             self::$dataCollector = $dataCollector ?: self::$dataCollector ?: new RedisDataCollector();
             self::$request = $request ?: Request::createFromGlobals();
+
             self::$isReady = true;
-            self::$debug = $debug;
         }
     }
 
@@ -136,11 +127,22 @@ class Ninja
         }
 
         if ($blockage = self::isBlocked()) {
-            self::deflect(self::$hazards[$blockage['name']]);
+            self::deflect(self::$hazards[$blockage['name']]['type']);
         }
 
         foreach (self::$hazards as $hazard) {
             if ($result = $hazard['rule'](self::$request)) {
+                // If the whitelist matches, we break the loop
+                if ($hazard['type'] === self::HAZARD_TYPE_WHITELIST) {
+                    break;
+                }
+
+                // If we are blacklisted, we quit immediately
+                if ($hazard['type'] === self::HAZARD_TYPE_BLACKLIST) {
+                    self::deflect(self::HAZARD_TYPE_BLACKLIST);
+                }
+
+                // Check if it is a bucket
                 if (isset($hazard['bucket_size']) && isset($hazard['bucket_leak'])) {
                     self::hit($hazard);
 
@@ -149,9 +151,11 @@ class Ninja
                         if (isset($hazard['timeout']) && $hazard['timeout'] > 0) {
                             self::block($hazard);
                         } else {
-                            self::deflect($hazard);
+                            self::deflect($hazard['type']);
                         }
                     }
+                } elseif ($hazard['type'] === self::HAZARD_TYPE_BLACKLIST) {
+                    self::deflect(self::HAZARD_TYPE_BLACKLIST);
                 }
             }
         }
@@ -167,8 +171,6 @@ class Ninja
      */
     public static function inject(Response &$response, $blocked = false)
     {
-        $redisKey = static::REDIS_PREFIX . ':throttle:' . static::$request->getClientIp();
-
         self::$runtime = self::$runtime ?: microtime(true) - self::$start;
 
         $response->headers->add(
@@ -185,45 +187,43 @@ class Ninja
     /**
      * Explains the Ninja about a specific hazard and how to detect one.
      *
-     * @param string   $name       The name of the hazard
-     * @param string   $type       The type of the hazard
-     * @param \Closure $rule       A callable which returns true if the hazard is detected
-     * @param int      $bucketSize The size of the bucket
-     * @param float    $bucketLeak The leak of the bucket
-     * @param int      $timeout    The timeout for once the bucket overflows
+     * @param string   $name    The name of the hazard
+     * @param string   $type    The type of the hazard
+     * @param \Closure $rule    A callable which returns true if the hazard is detected
+     * @param array    $options An array containing options such as bucket leak and bucket size.
      *
      * @throws \InvalidArgumentException
      */
-    public static function addHazard($name, $type, \Closure $rule, $bucketSize, $bucketLeak, $timeout = null)
+    public static function addHazard($name, $type, \Closure $rule, array $options = array())
     {
         if (!in_array($type, self::$hazardTypes)) {
             throw new \InvalidArgumentException(sprintf('Type "%s" is not a valid hazard type.', $type));
         }
 
-        if (($timeout === null || (int) $timeout <= 0) && $type === self::HAZARD_TYPE_ATTACK) {
-            throw new \InvalidArgumentException(sprintf('For hazard type "%s", %s must be set.', $type, '$timeout'));
+        if ((!array_key_exists('timeout', $options) || (int) $options['timeout'] <= 0) && $type === self::HAZARD_TYPE_ATTACK) {
+            throw new \InvalidArgumentException(sprintf('For hazard type "%s", %s must be set.', $type, '$options[\'timeout\']'));
         }
 
-        self::$hazards[$name] = array(
-            'name'        => (string) $name,
-            'type'        => (string) $type,
-            'rule'        => $rule,
-            'bucket_size' => (int) $bucketSize,
-            'bucket_leak' => (float) $bucketLeak,
-            'timeout'     => (int) $timeout
+        self::$hazards[$name] = array_merge(
+            array(
+                'name' => (string) $name,
+                'type' => (string) $type,
+                'rule' => $rule,
+            ),
+            $options
         );
     }
 
     /**
      * Blocks an incoming Request with an appropriate message.
      *
-     * @param array $hazard The hazard to deflect
+     * @param string $type The type to deflect
      *
      * @throws \InvalidArgumentException
      */
-    private static function deflect(array $hazard)
+    private static function deflect($type)
     {
-        switch ($hazard['type']) {
+        switch ($type) {
             case self::HAZARD_TYPE_WHITELIST:
                 return;
             case self::HAZARD_TYPE_THROTTLE:
@@ -357,7 +357,7 @@ class Ninja
         // Check if there is a blockage
         if (self::$dataCollector->exists($redisKey) && $blockage = self::$dataCollector->fetch($redisKey)) {
             // Check if it has expired
-            if (microtime(true) >= $blockage['time']) {
+            if (microtime(true) >= $blockage['time'] + self::$hazards[$blockage['name']]['timeout']) {
                 self::$dataCollector->purge($redisKey);
 
                 return false;
