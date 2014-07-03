@@ -29,6 +29,7 @@ When the hazard returns true, it means the hazard has been detected. To detect a
 You should also give your Ninja something to protect.
 
 ``` php
+<?php
 use Ninja\Ninja;
 
 // ...
