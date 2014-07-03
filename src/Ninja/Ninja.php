@@ -291,7 +291,6 @@ class Ninja
             }
         }
 
-
         // Redefine the bucket's contents
         $bucket['time'] = microtime(true);
         $bucket['hits']++;

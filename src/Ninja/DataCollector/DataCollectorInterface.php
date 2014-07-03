@@ -1,7 +1,8 @@
 <?php
 namespace Ninja\DataCollector;
 
-interface DataCollectorInterface {
+interface DataCollectorInterface
+{
     /**
      * Retrieves the value of $key from the datastorage.
      *
@@ -14,9 +15,9 @@ interface DataCollectorInterface {
     /**
      * Saves data in the datastorage.
      *
-     * @param string $key The key that refers to a place in the datastorage
-     * @param mixed $value Value that will be written to the datastorage
-     * @param int $ttl Time to live in seconds
+     * @param string $key   The key that refers to a place in the datastorage
+     * @param mixed  $value Value that will be written to the datastorage
+     * @param int    $ttl   Time to live in seconds
      *
      * @return bool
      */
