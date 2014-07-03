@@ -29,6 +29,8 @@ When the hazard returns true, it means the hazard has been detected. To detect a
 You should also give your Ninja something to protect.
 
 ``` php
+use Ninja\Ninja;
+
 // ...
 Request::enableHttpMethodParameterOverride();
 $request = Request::createFromGlobals();
@@ -45,3 +47,6 @@ Ninja::inject($response);
 $response->send();
 $kernel->terminate($request, $response);
 ```
+
+## Legals
+You can find the LICENSE file in this project.
